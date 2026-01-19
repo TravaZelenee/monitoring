@@ -14,9 +14,18 @@ jobs:
       - name: Установка SSH ключа
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.DEPLOY_KEY }}" > ~/.ssh/id_ed25519
+          echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -p 2232 -t rsa ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts
+          ssh-keyscan -H $REMOTE_HOST >> ~/.ssh/known_hosts
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          REMOTE_HOST: ${{ secrets.REMOTE_HOST }}
+
+      - name: Проверка SSH соединения
+        run: ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "echo Connected!"
+        env:
+          REMOTE_USER: ${{ secrets.REMOTE_USER }}
+          REMOTE_HOST: ${{ secrets.REMOTE_HOST }}
 
       - name: Определение имен для проекта
         run: |
