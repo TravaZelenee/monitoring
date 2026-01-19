@@ -1,4 +1,4 @@
-name: Deploy Project (HTTPS)
+name: Deploy to Remote Server
 
 on:
   push:
@@ -11,48 +11,107 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v3
 
-      - name: Определение переменных проекта
-        run: |
-          REPO_NAME=$(echo $GITHUB_REPOSITORY | cut -d'/' -f2)
-          BRANCH_NAME=$(echo $GITHUB_REF_NAME | tr '[:upper:]' '[:lower:]')
-          REPO_DIR="/home/${{ secrets.DEPLOY_USER }}/projects/$REPO_NAME/$BRANCH_NAME"
-          IMAGE_NAME="${REPO_NAME}_${BRANCH_NAME}_image"
-          CONTAINER_NAME="${BRANCH_NAME}_${REPO_NAME}"
 
-          echo "REPO_DIR=$REPO_DIR" >> $GITHUB_ENV
-          echo "IMAGE_NAME=$IMAGE_NAME" >> $GITHUB_ENV
-          echo "CONTAINER_NAME=$CONTAINER_NAME" >> $GITHUB_ENV
-        env:
-          REMOTE_USER: ${{ secrets.DEPLOY_USER }}
+    - name: Установка SSH ключа
+      run: |
+        mkdir -p ~/.ssh
+        echo "$SSH_PRIVATE_KEY" > ../ssh_key.pem
+        chmod 600 ../ssh_key.pem
+        ssh-keyscan -p 2232 -t rsa $REMOTE_HOST >> ~/.ssh/known_hosts
+      env:
+        SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        REMOTE_HOST: ${{ secrets.REMOTE_HOST }}
 
-      - name: Клонирование/обновление репозитория
-        run: |
-          ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} "
-            if [ ! -d '$REPO_DIR/.git' ]; then
-              echo 'Клонируем репозиторий через HTTPS...'
-              mkdir -p $(dirname $REPO_DIR)
-              git clone https://$GITHUB_ACTOR:${{ secrets.GH_TOKEN }}@github.com/$GITHUB_REPOSITORY.git $REPO_DIR
-            else
-              echo 'Обновляем репозиторий...'
-              cd $REPO_DIR
-              git fetch origin
-              git checkout $GITHUB_REF_NAME
-              git pull origin $GITHUB_REF_NAME
-            fi
-          "
-        env:
-          GITHUB_ACTOR: ${{ github.actor }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          GITHUB_REF_NAME: ${{ github.ref_name }}
-          REMOTE_USER: ${{ secrets.DEPLOY_USER }}
-          REMOTE_HOST: ${{ secrets.DEPLOY_HOST }}
 
-      - name: Запуск Docker Compose
-        run: |
-          ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} "
-            cd $REPO_DIR
-            docker-compose down --remove-orphans
-            docker-compose up -d --build
-          "
+    - name: Определение имен для проекта
+      run: |
+        REPO_NAME=$(echo $GITHUB_REPOSITORY | cut -d'/' -f 2)
+        BRANCH_NAME=$(echo $GITHUB_REF_NAME | tr '[:upper:]' '[:lower:]')
+
+        IMAGE_NAME="${REPO_NAME}_${BRANCH_NAME}_image"
+        CONTAINER_NAME="${BRANCH_NAME}_${REPO_NAME}"  
+        REPO_DIR="/home/$REMOTE_USER/projects/$REPO_NAME/$BRANCH_NAME"
+        
+        echo "IMAGE_NAME=$IMAGE_NAME" >> $GITHUB_ENV
+        echo "REPO_DIR=$REPO_DIR" >> $GITHUB_ENV
+        echo "CONTAINER_NAME=$CONTAINER_NAME" >> $GITHUB_ENV
+      env:
+        REMOTE_USER: ${{ secrets.REMOTE_USER }}
+      shell: bash
+
+
+#    - name: Остановка контейнеров с использованием Docker Compose
+#      run: |
+#        echo "Проверка существования папки проекта"
+#        if ssh -i ../ssh_key.pem -p 2232 $REMOTE_USER@$REMOTE_HOST "[ -d $REPO_DIR ]"; then
+#          echo "Папка проекта $REPO_DIR обнаружена"
+#          echo "Останавливаем и удаляем контейнеры"
+#          ssh -i ../ssh_key.pem -p 2232 $REMOTE_USER@$REMOTE_HOST "cd $REPO_DIR && sudo IMAGE_NAME=$IMAGE_NAME CONTAINER_NAME=$CONTAINER_NAME docker-compose down || true"
+#        else
+#          echo "Папка проекта $REPO_DIR не найдена. Пропускаем остановку контейнеров."
+#        fi
+#      env:
+#        REMOTE_USER: ${{ secrets.REMOTE_USER }}
+#        REMOTE_HOST: ${{ secrets.REMOTE_HOST }}
+#      shell: bash
+
+
+    - name: Обновление данных проекта
+      run: |
+        set -e
+        BRANCH=${GITHUB_REF#refs/heads/}
+
+        check_repo_dir() {
+          ssh -i ../ssh_key.pem -p 2232 $REMOTE_USER@$REMOTE_HOST "[ ! -d $REPO_DIR ]"
+        }
+
+        clone_repo() {
+          echo "Клонирование проекта на сервер"
+          ssh -i ../ssh_key.pem -p 2232 $REMOTE_USER@$REMOTE_HOST "git clone https://$GITHUB_ACTOR:${{ secrets.TOKEN }}@github.com/$GITHUB_REPOSITORY.git $REPO_DIR"
+        }
+
+        update_repo() {
+          echo "Обновление проекта"
+          ssh -i ../ssh_key.pem -p 2232 $REMOTE_USER@$REMOTE_HOST "cd $REPO_DIR && git fetch origin && git checkout $BRANCH && git pull origin $BRANCH"
+        }
+
+        init_submodules() {
+          echo "Инициализация и обновление подмодулей"
+          ssh -i ../ssh_key.pem -p 2232 $REMOTE_USER@$REMOTE_HOST "cd $REPO_DIR && git submodule update --init --recursive"
+        }
+
+        if check_repo_dir; then
+          echo "Папка проекта $REPO_DIR не найдена"
+          clone_repo
+          update_repo
+          init_submodules
+          echo "Прошло успешно"
+        else
+          echo "Папка проекта $REPO_DIR обнаружена"
+          update_repo
+          init_submodules
+          echo "Прошло успешно"
+        fi
+      env:
+        REMOTE_USER: ${{ secrets.REMOTE_USER }}
+        REMOTE_HOST: ${{ secrets.REMOTE_HOST }}
+        GITHUB_ACTOR: ${{ github.actor }}
+      shell: bash
+
+
+    - name: Запуск проекта с использованием Docker Compose
+      run: |
+        echo "Проверка существования папки проекта"
+        if ssh -i ../ssh_key.pem -p 2232 $REMOTE_USER@$REMOTE_HOST "[ -d $REPO_DIR ]"; then
+          echo "Папка проекта $REPO_DIR обнаружена"
+          echo "Собираем и запускаем контейнеры"
+          ssh -i ../ssh_key.pem -p 2232 $REMOTE_USER@$REMOTE_HOST "cd $REPO_DIR && sudo IMAGE_NAME=$IMAGE_NAME CONTAINER_NAME=$CONTAINER_NAME docker-compose -p $CONTAINER_NAME up -d --build"
+        else
+          echo "Папка проекта $REPO_DIR не найдена. Невозможно запустить контейнеры."
+          exit 1
+        fi
+      env:
+        REMOTE_USER: ${{ secrets.REMOTE_USER }}
+        REMOTE_HOST: ${{ secrets.REMOTE_HOST }}
+      shell: bash
