@@ -1,99 +1,26 @@
-name: Deploy to Remote Server
+name: Deploy Backend
 
 on:
   push:
     branches:
       - main
-      - dev
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Установка SSH ключа
-        run: |
-          mkdir -p ~/.ssh
-          echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -H $REMOTE_HOST >> ~/.ssh/known_hosts
-        env:
-          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-          REMOTE_HOST: ${{ secrets.REMOTE_HOST }}
+      - uses: actions/checkout@v3
 
-      - name: Проверка SSH соединения
-        run: ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no $REMOTE_USER@$REMOTE_HOST "echo Connected!"
-        env:
-          REMOTE_USER: ${{ secrets.REMOTE_USER }}
-          REMOTE_HOST: ${{ secrets.REMOTE_HOST }}
-
-      - name: Определение имен для проекта
-        run: |
-          REPO_NAME=$(echo $GITHUB_REPOSITORY | cut -d'/' -f 2)
-          BRANCH_NAME=$(echo $GITHUB_REF_NAME | tr '[:upper:]' '[:lower:]')
-
-          IMAGE_NAME="${REPO_NAME}_${BRANCH_NAME}_image"
-          CONTAINER_NAME="${BRANCH_NAME}_${REPO_NAME}"  
-          REPO_DIR="/home/${REMOTE_USER}/projects/${REPO_NAME}/${BRANCH_NAME}"
-
-          echo "IMAGE_NAME=$IMAGE_NAME" >> $GITHUB_ENV
-          echo "REPO_DIR=$REPO_DIR" >> $GITHUB_ENV
-          echo "CONTAINER_NAME=$CONTAINER_NAME" >> $GITHUB_ENV
-        env:
-          REMOTE_USER: ${{ secrets.REMOTE_USER }}
-        shell: bash
-
-      #    - name: Остановка контейнеров с использованием Docker Compose
-      #      run: |
-      #        echo "Проверка существования папки проекта"
-      #        if ssh -i ../ssh_key.pem -p 2232 $REMOTE_USER@$REMOTE_HOST "[ -d $REPO_DIR ]"; then
-      #          echo "Папка проекта $REPO_DIR обнаружена"
-      #          echo "Останавливаем и удаляем контейнеры"
-      #          ssh -i ../ssh_key.pem -p 2232 $REMOTE_USER@$REMOTE_HOST "cd $REPO_DIR && sudo IMAGE_NAME=$IMAGE_NAME CONTAINER_NAME=$CONTAINER_NAME docker-compose down || true"
-      #        else
-      #          echo "Папка проекта $REPO_DIR не найдена. Пропускаем остановку контейнеров."
-      #        fi
-      #      env:
-      #        REMOTE_USER: ${{ secrets.REMOTE_USER }}
-      #        REMOTE_HOST: ${{ secrets.REMOTE_HOST }}
-      #      shell: bash
-
-      - name: Обновление данных проекта
-        run: |
-          set -e
-          BRANCH=${GITHUB_REF#refs/heads/}
-
-          ssh_opts="-i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no -p 2232"
-
-          ssh $ssh_opts ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} "
-            if [ ! -d '$REPO_DIR/.git' ]; then
-              echo 'Клонируем репозиторий через SSH...'
-              mkdir -p $(dirname $REPO_DIR)
-              git clone git@github.com:${GITHUB_REPOSITORY}.git $REPO_DIR
-            else
-              echo 'Обновляем репозиторий...'
-              cd $REPO_DIR
-              git fetch origin
-              git checkout $BRANCH
-              git pull origin $BRANCH
-            fi
-          "
-        env:
-          REPO_DIR: /home/${{ secrets.DEPLOY_USER }}/projects/monitoring/${{ github.ref_name }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-
-      - name: Запуск проекта с использованием Docker Compose
-        run: |
-          echo "Проверка существования папки проекта"
-          if ssh -i ../ssh_key.pem -p 2232 $REMOTE_USER@$REMOTE_HOST "[ -d $REPO_DIR ]"; then
-            echo "Папка проекта $REPO_DIR обнаружена"
-            echo "Собираем и запускаем контейнеры"
-            ssh -i ../ssh_key.pem -p 2232 $REMOTE_USER@$REMOTE_HOST "cd $REPO_DIR && sudo IMAGE_NAME=$IMAGE_NAME CONTAINER_NAME=$CONTAINER_NAME docker-compose -p $CONTAINER_NAME up -d --build"
-          else
-            echo "Папка проекта $REPO_DIR не найдена. Невозможно запустить контейнеры."
-            exit 1
-          fi
-        env:
-          REMOTE_USER: ${{ secrets.REMOTE_USER }}
-          REMOTE_HOST: ${{ secrets.REMOTE_HOST }}
-        shell: bash
+      - name: SSH to server and deploy
+        uses: appleboy/ssh-action@v0.1.6
+        with:
+          host: ${{ secrets.REMOTE_HOST }}
+          username: ${{ secrets.REMOTE_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            cd ~/backend
+            git pull
+            docker-compose build
+            docker-compose down --remove-orphans
+            docker-compose up -d
