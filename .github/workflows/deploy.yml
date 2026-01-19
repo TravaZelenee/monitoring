@@ -1,39 +1,37 @@
 name: Deploy Monitoring
 
 on:
-  push:
-    branches:
-      - main
+    push:
+        branches:
+            - main
 
 jobs:
-  deploy:
-    runs-on: ubuntu-latest
+    deploy:
+        runs-on: ubuntu-latest
 
-    steps:
-      - uses: actions/checkout@v3
+        steps:
+            - uses: actions/checkout@v3
 
-      - name: SSH to server and deploy
-        uses: appleboy/ssh-action@v0.1.6
-        with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USER }}
-          key: ${{ secrets.DEPLOY_KEY }}
-          script: |
-            REPO_DIR="$HOME/monitoring"
-            REPO_URL="git@github.com:TravaZelenee/monitoring.git"
+            - name: SSH to server and deploy
+              uses: appleboy/ssh-action@v0.1.6
+              with:
+                  host: ${{ secrets.DEPLOY_HOST }}
+                  username: ${{ secrets.DEPLOY_USER }}
+                  key: ${{ secrets.DEPLOY_KEY }} # приватный ключ сервера
+                  script: |
+                      export GIT_SSH_COMMAND='ssh -i ~/.ssh/id_ed25519_trava -o StrictHostKeyChecking=no'
+                      REPO_DIR="$HOME/monitoring"
+                      REPO_URL="git@github.com:TravaZelenee/monitoring.git"
 
-            # Если репозитория нет — клонируем
-            if [ ! -d "$REPO_DIR/.git" ]; then
-              echo "Repository not found. Cloning..."
-              rm -rf "$REPO_DIR"
-              git clone "$REPO_URL" "$REPO_DIR"
-            fi
+                      if [ ! -d "$REPO_DIR/.git" ]; then
+                        echo "Repository not found. Cloning..."
+                        rm -rf "$REPO_DIR"
+                        git clone "$REPO_URL" "$REPO_DIR"
+                      fi
 
-            # Переходим в папку и обновляем код
-            cd "$REPO_DIR"
-            git pull
+                      cd "$REPO_DIR"
+                      git pull
 
-            # Останавливаем старые контейнеры и поднимаем новые
-            docker-compose down --remove-orphans
-            docker-compose pull
-            docker-compose up -d
+                      docker-compose down --remove-orphans
+                      docker-compose pull
+                      docker-compose up -d
