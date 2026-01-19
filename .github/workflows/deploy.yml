@@ -19,7 +19,7 @@ jobs:
           username: ${{ secrets.REMOTE_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            cd ~/backend
+            cd ~/monitoring
             git pull
             docker-compose build
             docker-compose down --remove-orphans
